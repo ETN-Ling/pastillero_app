@@ -20,6 +20,30 @@
   var EN_LINEA_MS = 3 * 60 * 1000;
   var HUMEDAD_MAX = 60, TEMP_MAX = 30;
 
+  var EN_LINEA_MS = 3 * 60 * 1000;
+  var HUMEDAD_MAX = 60, TEMP_MAX = 30;
+  var MAX_AVISOS_INICIO = 3;
+
+  function claveVistas() {
+    return "pastillero_vistas_" + ((estado.usuario && estado.usuario.uid) || "anon") + "_" + (estado.dev || "dev");
+  }
+  function obtenerVistas() {
+    try { return JSON.parse(leerLocal(claveVistas()) || "{}"); } catch (e) { return {}; }
+  }
+  function marcarAlertasVistas(ids) {
+    if (!ids || !ids.length) return;
+    var vistas = obtenerVistas();
+    var ahoraMs = Date.now();
+    ids.forEach(function (id) { vistas[id] = ahoraMs; });
+    var claves = Object.keys(vistas);
+    if (claves.length > 250) {
+      claves.sort(function (a, b) { return vistas[a] - vistas[b]; })
+        .slice(0, claves.length - 250)
+        .forEach(function (k) { delete vistas[k]; });
+    }
+    guardarLocal(claveVistas(), JSON.stringify(vistas));
+  }
+
   function $(sel, el) { return (el || document).querySelector(sel); }
   function $$(sel, el) { return Array.prototype.slice.call((el || document).querySelectorAll(sel)); }
   function esc(s) {
@@ -98,7 +122,7 @@
     usuario: null, perfil: null, dispositivos: null, dev: null,
     info: null, estadoDev: null, recipientes: null, horarios: null, comandos: null,
     paciente: null, pacienteId: null, historial: null, alertas: null,
-    vista: "inicio", historialTab: "tomas", desfase: 0
+    vista: "inicio", historialTab: "tomas", desfase: 0, alertasMostradas: []
   };
   var bajas = [];        // funciones para dejar de escuchar
   var bajaPaciente = null;
@@ -281,6 +305,10 @@
     $("#app").innerHTML = html;
     $$(".tabs [data-vista]").forEach(function (b) {
       b.onclick = function () {
+        if (estado.vista === "inicio" && b.dataset.vista !== "inicio") {
+          marcarAlertasVistas(estado.alertasMostradas);
+          estado.alertasMostradas = [];
+        }
         estado.vista = b.dataset.vista;
         try { history.replaceState(null, "", "#" + estado.vista); } catch (e) {}
         pintar();
@@ -352,8 +380,12 @@
       if (r.humedad_pct > HUMEDAD_MAX) avisos.push(recChip(n, true) + "<span>Humedad alta (" + Math.round(r.humedad_pct) + " %) en " + esc(r.medicamento || "recipiente " + n) + ". Cambia la sílica gel.</span>");
       if (r.temperatura_c > TEMP_MAX) avisos.push(recChip(n, true) + "<span>Temperatura alta (" + r.temperatura_c.toFixed(1) + " °C) en " + esc(r.medicamento || "recipiente " + n) + ".</span>");
     });
-    if (avisos.length) out += '<div class="banner warn"><div style="display:flex;flex-direction:column;gap:6px">' + avisos.map(function (a) { return '<div style="display:flex;gap:8px;align-items:center">' + a + "</div>"; }).join("") + "</div></div>";
-
+    var firmaAvisos = avisos.join("|");
+    if (avisos.length && leerLocal("pastillero_banner_oculto_" + estado.dev) !== firmaAvisos) {
+      out += '<div class="banner warn"><div style="flex:1;display:flex;flex-direction:column;gap:6px">' +
+        avisos.map(function (a) { return '<div style="display:flex;gap:8px;align-items:center">' + a + "</div>"; }).join("") +
+        '</div><button class="linkish small" id="b-ocultar-avisos" data-firma="' + esc(firmaAvisos) + '">Ocultar</button></div>';
+    }
     // proxima toma
     var px = proximaToma();
     out += '<section class="section"><div class="eyebrow">Próxima toma</div>';
@@ -406,11 +438,27 @@
     });
     out += "</div></section>";
 
-    // ultima alerta
-    var al = lista(estado.alertas).sort(function (a, b) { return (b.fecha || 0) - (a.fecha || 0); })[0];
-    if (al) {
-      out += '<section class="section"><div class="section-head"><h2>Último aviso</h2><button class="linkish small" data-ir="historial" data-tab="alertas">Ver todos</button></div>' +
-        '<div class="list"><div class="row"><div class="grow"><div class="title">' + esc(ETIQUETA_ALERTA[al.tipo] || al.tipo) + '</div><div class="sub">' + esc(al.mensaje || "") + '</div></div><span class="muted small">' + (al.fecha ? esc(haceCuanto(al.fecha)) : "") + "</span></div></div></section>";
+    // avisos recientes no vistos (maximo MAX_AVISOS_INICIO)
+    var vistas = obtenerVistas();
+    var recientes = lista(estado.alertas)
+      .filter(function (a) { return a.tipo !== "ejemplo" && !vistas[a._id]; })
+      .sort(function (a, b) { return (b.fecha || 0) - (a.fecha || 0); })
+      .slice(0, MAX_AVISOS_INICIO);
+    estado.alertasMostradas = recientes.map(function (a) { return a._id; });
+
+    if (recientes.length) {
+      out += '<section class="section"><div class="section-head"><h2>' +
+        (recientes.length === 1 ? "Aviso reciente" : "Avisos recientes (" + recientes.length + ")") +
+        '</h2><div style="display:flex;gap:12px;align-items:center">' +
+        '<button class="linkish small" id="a-marcar-vistas">Entendido</button>' +
+        '<button class="linkish small" data-ir="historial" data-tab="alertas">Historial</button>' +
+        '</div></div><div class="list">';
+      recientes.forEach(function (al) {
+        out += '<div class="row"><div class="grow"><div class="title">' + esc(ETIQUETA_ALERTA[al.tipo] || al.tipo) +
+          '</div><div class="sub">' + esc(al.mensaje || "") + '</div></div><span class="muted small">' +
+          (al.fecha ? esc(haceCuanto(al.fecha)) : "") + "</span></div>";
+      });
+      out += "</div></section>";
     }
     return out;
   }
@@ -676,8 +724,28 @@
   }
 
   // ---------------------------------------------------------------- eventos de cada vista
-  function enlazar() {
-    $$("[data-ir]").forEach(function (b) { b.onclick = function () { estado.vista = b.dataset.ir; if (b.dataset.tab) estado.historialTab = b.dataset.tab; pintar(); window.scrollTo(0, 0); }; });
+ function enlazar() {
+    $$("[data-ir]").forEach(function (b) {
+      b.onclick = function () {
+        if (estado.vista === "inicio" && b.dataset.ir !== "inicio") {
+          marcarAlertasVistas(estado.alertasMostradas);
+          estado.alertasMostradas = [];
+        }
+        estado.vista = b.dataset.ir;
+        if (b.dataset.tab) estado.historialTab = b.dataset.tab;
+        pintar();
+        window.scrollTo(0, 0);
+      };
+    });
+    if ($("#a-marcar-vistas")) $("#a-marcar-vistas").onclick = function () {
+      marcarAlertasVistas(estado.alertasMostradas);
+      estado.alertasMostradas = [];
+      pintar();
+    };
+    if ($("#b-ocultar-avisos")) $("#b-ocultar-avisos").onclick = function () {
+      guardarLocal("pastillero_banner_oculto_" + estado.dev, this.dataset.firma || "");
+      pintar();
+    };
     $$("[data-dispensar]").forEach(function (b) {
       b.onclick = function () {
         var n = +b.dataset.dispensar;
