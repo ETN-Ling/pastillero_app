@@ -1,0 +1,133 @@
+{
+  "dispositivos": {
+    "pastillero_01": {
+      "info": {
+        "nombre": "Pastillero de prueba",
+        "paciente": "paciente_01",
+        "firmware": "0.1-prueba"
+      },
+      "estado": {
+        "en_linea": false,
+        "ultima_conexion": 0,
+        "ip": "",
+        "rssi_dbm": 0,
+        "hora_local": ""
+      },
+      "recipientes": {
+        "r1": {
+          "medicamento": "Medicamento 1",
+          "dosis": "1 tableta",
+          "peso_pastilla_g": 0.3,
+          "pastillas": 0,
+          "peso_g": 0,
+          "temperatura_c": 0,
+          "humedad_pct": 0,
+          "actualizado": 0,
+          "capacidad": 60,
+          "aviso_minimo": 10
+        },
+        "r2": {
+          "medicamento": "Medicamento 2",
+          "dosis": "1 tableta",
+          "peso_pastilla_g": 0.3,
+          "pastillas": 0,
+          "peso_g": 0,
+          "temperatura_c": 0,
+          "humedad_pct": 0,
+          "actualizado": 0,
+          "capacidad": 60,
+          "aviso_minimo": 10
+        },
+        "r3": {
+          "medicamento": "Medicamento 3",
+          "dosis": "1 tableta",
+          "peso_pastilla_g": 0.3,
+          "pastillas": 0,
+          "peso_g": 0,
+          "temperatura_c": 0,
+          "humedad_pct": 0,
+          "actualizado": 0,
+          "capacidad": 60,
+          "aviso_minimo": 10
+        }
+      },
+      "vaso": {
+        "peso_g": 0,
+        "actualizado": 0
+      },
+      "horarios": {
+        "h1": {
+          "recipiente": 1,
+          "hora": "08:00",
+          "dias": "LMXJVSD",
+          "cantidad": 1,
+          "activo": true
+        },
+        "h2": {
+          "recipiente": 2,
+          "hora": "14:00",
+          "dias": "LMXJVSD",
+          "cantidad": 1,
+          "activo": true
+        },
+        "h3": {
+          "recipiente": 3,
+          "hora": "21:00",
+          "dias": "LMXJVSD",
+          "cantidad": 1,
+          "activo": true
+        }
+      },
+      "comandos": {
+        "mensaje": "escribe aqui algo desde la consola",
+        "dispensar_ahora": 0
+      }
+    }
+  },
+  "pacientes": {
+    "paciente_01": {
+      "nombre": "Paciente de prueba",
+      "edad": 0,
+      "notas": "",
+      "dispositivo": "pastillero_01",
+      "contactos": {}
+    }
+  },
+  "historial_dosis": {
+    "pastillero_01": {
+      "ejemplo": {
+        "recipiente": 1,
+        "medicamento": "Medicamento 1",
+        "programada": "2026-10-20 08:00",
+        "dispensada": 0,
+        "retirada": 0,
+        "estado": "ejemplo",
+        "peso_vaso_g": 0,
+        "intentos": 0
+      }
+    }
+  },
+  "historial_alertas": {
+    "pastillero_01": {
+      "ejemplo": {
+        "tipo": "ejemplo",
+        "mensaje": "Asi se guardan los avisos",
+        "fecha": 0,
+        "enviado": true
+      }
+    }
+  },
+  "codigos": {
+    "pastillero_01": "539697"
+  },
+  "usuarios": {
+    "aIo2McUzhiY1TeK2f4Xa7OgbIPT2": {
+      "perfil": {
+        "nombre": "Pastillero 01 (dispositivo)"
+      },
+      "dispositivos": {
+        "pastillero_01": "539697"
+      }
+    }
+  }
+}

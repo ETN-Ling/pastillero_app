@@ -1,0 +1,47 @@
+{
+  "rules": {
+    "usuarios": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "perfil": {
+          ".write": "auth != null && auth.uid === $uid"
+        },
+        "dispositivos": {
+          "$dev": {
+            ".write": "auth != null && auth.uid === $uid && (!newData.exists() || newData.val() === root.child('codigos').child($dev).val())"
+          }
+        }
+      }
+    },
+    "codigos": {
+      ".read": false,
+      ".write": false
+    },
+    "dispositivos": {
+      "$dev": {
+        ".read": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
+        ".write": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()"
+      }
+    },
+    "pacientes": {
+      "$pac": {
+        ".read": "auth != null && data.child('dispositivo').exists() && root.child('usuarios').child(auth.uid).child('dispositivos').child(data.child('dispositivo').val()).exists()",
+        ".write": "auth != null && ((newData.child('dispositivo').exists() && root.child('usuarios').child(auth.uid).child('dispositivos').child(newData.child('dispositivo').val()).exists()) || (!newData.exists() && root.child('usuarios').child(auth.uid).child('dispositivos').child(data.child('dispositivo').val()).exists()))"
+      }
+    },
+    "historial_dosis": {
+      "$dev": {
+        ".read": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
+        ".write": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
+        ".indexOn": ["dispensada", "estado"]
+      }
+    },
+    "historial_alertas": {
+      "$dev": {
+        ".read": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
+        ".write": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
+        ".indexOn": ["fecha", "tipo", "enviado"]
+      }
+    }
+  }
+}
