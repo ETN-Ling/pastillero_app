@@ -237,6 +237,19 @@ dialog::backdrop { background: rgba(10, 20, 18, .45); }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .loading { min-height: 100vh; display: grid; place-items: center; color: var(--muted); }
+/* ---------- camara ---------- */
+.cam { overflow: hidden; }
+.cam .shot { display: block; width: 100%; aspect-ratio: 4 / 3; border: 0; padding: 0; background: var(--surface-2); cursor: zoom-in; }
+.cam .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cam-foot { padding: 12px 14px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.thumbs { display: flex; gap: 8px; overflow-x: auto; padding: 0 14px 14px; scrollbar-width: thin; }
+.thumbs button, .mini { flex: none; width: 64px; height: 48px; border-radius: 8px; overflow: hidden; border: 2px solid transparent; padding: 0; background: var(--surface-2); cursor: pointer; }
+.mini { width: 52px; height: 39px; border: 1px solid var(--line); }
+.thumbs button[aria-current="true"] { border-color: var(--accent); }
+.thumbs img, .mini img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.minis { display: flex; gap: 6px; flex: none; align-self: center; }
+.viewer img { width: 100%; border-radius: 10px; display: block; background: var(--surface-2); }
+.diag-sum { padding: 14px 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 

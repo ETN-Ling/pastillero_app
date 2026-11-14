@@ -1,5 +1,5 @@
 /* Guarda la app para que abra aunque la red este lenta. Siempre intenta la version nueva primero. */
-const CACHE = "pastillero-v1";
+const CACHE = "pastillero-v4";
 const ARCHIVOS = ["./", "./index.html", "./app.js", "./backend.js", "./firebase-config.js", "./manifest.webmanifest", "./icons/icon-192.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARCHIVOS))); self.skipWaiting(); });
 self.addEventListener("activate", (e) => {

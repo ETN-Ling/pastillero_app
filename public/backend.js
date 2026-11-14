@@ -114,14 +114,59 @@ function crearBackendDemo() {
       var base = "dispositivos/pastillero_01";
       var r = obtener(base + "/recipientes/r" + rec) || {};
       var ahora = new Date();
-      fijar("historial_dosis/pastillero_01/" + nueva(), {
+      var idToma = nueva();
+      fijar("historial_dosis/pastillero_01/" + idToma, {
         recipiente: rec, medicamento: r.medicamento || "", programada: fechaHoraTexto(ahora) + " (manual)",
         dispensada: Date.now(), retirada: 0, estado: "pendiente", peso_vaso_g: r.peso_pastilla_g || 0.3, intentos: 1
       });
       fijar(base + "/recipientes/r" + rec + "/pastillas", Math.max(0, (r.pastillas || 0) - 1));
       fijar(base + "/comandos/dispensar_ahora", 0);
       avisar();
+      simularFoto(null, "dispensada", idToma);
     }, 2500);
+  }
+
+  // la "camara" atiende los pedidos de foto
+  function simularFoto(clavePedido, motivo, toma) {
+    setTimeout(function () {
+      var base = "dispositivos/pastillero_01/camara";
+      var slot = ((obtener(base + "/slot") || 0) + 1) % 20;
+      var clave = "f" + String(slot).padStart(2, "0");
+      var vaso = obtener("dispositivos/pastillero_01/vaso/peso_g") || 0;
+      fijar("fotos/pastillero_01/" + clave, fotoDemo(motivo, toma, Date.now(), motivo === "retirada" ? 0 : (motivo === "dispensada" || vaso > 0.1 ? 1 : 0)));
+      fijar(base + "/slot", slot);
+      fijar(base + "/ultima_foto", clave);
+      fijar(base + "/ultima_fecha", Date.now());
+      if (clavePedido) fijar(base + "/pedidos/" + clavePedido, null);
+      if (toma) fijar("historial_dosis/pastillero_01/" + toma + "/foto_" + motivo, clave);
+      avisar();
+    }, 2500);
+  }
+  function simularAutoprueba(motores) {
+    var base = "dispositivos/pastillero_01";
+    setTimeout(function () { fijar(base + "/comandos/autoprueba", 0); fijar(base + "/autoprueba/en_curso", true); avisar(); }, 1200);
+    setTimeout(function () {
+      var it = {
+        "01_wifi": ["WiFi", "ok", "Conectado, señal -58 dBm"], "02_firebase": ["Firebase", "ok", "Sesión iniciada con la cuenta del pastillero"],
+        "03_reloj": ["Reloj DS3231", "ok", "Hora guardada: " + fechaHoraTexto(new Date())], "04_tca": ["Multiplexor TCA9548A", "ok", "Responde en 0x70"],
+        "05_htu1": ["Sensor HTU21D rec. 1", "ok", "24.1 C, 38 % humedad"], "06_htu2": ["Sensor HTU21D rec. 2", "ok", "24.3 C, 41 % humedad"],
+        "07_htu3": ["Sensor HTU21D rec. 3", "falla", "No responde en el canal 2 del TCA9548A (SD2/SC2)"],
+        "08_celda1": ["Celda Recipiente 1", "ok", "37.8 g = 42 pastillas"], "09_celda2": ["Celda Recipiente 2", "ok", "2.0 g = 8 pastillas"],
+        "10_celda3": ["Celda Recipiente 3", "ok", "10.2 g = 51 pastillas"], "11_celda4": ["Celda Vaso", "ok", "0.0 g"],
+        "12_buzzer": ["Buzzer", "revisar", "Sonaron 2 pitidos: confirma que se escucharon"], "13_luces": ["Luz del vaso y LED", "revisar", "Se prendieron 2 s: confirma que se vieron"],
+        "14_boton": ["Botón", "ok", "Se detectó al presionarlo"]
+      };
+      [1, 2, 3].forEach(function (m) { it[(14 + m) + "_motor" + m] = ["Motor " + m, motores ? "revisar" : "omitido", motores ? "Giró a la salida y regresó a casa: confirma que el disco giró" : "No se pidió probar motores"]; });
+      var items = {}, res = { ok: 0, revisar: 0, falla: 0 };
+      Object.keys(it).forEach(function (k) { items[k] = { nombre: it[k][0], estado: it[k][1], detalle: it[k][2] }; if (res[it[k][1]] != null) res[it[k][1]]++; });
+      simularFoto(null, "prueba", "");
+      setTimeout(function () {
+        items["18_camara"] = { nombre: "Cámara ESP32-CAM", estado: "ok", detalle: "Tomó y subió la foto " + obtener(base + "/camara/ultima_foto"), foto: obtener(base + "/camara/ultima_foto") };
+        res.ok++;
+        fijar(base + "/autoprueba", { en_curso: false, fecha: Date.now(), origen: "app", motores: motores, resumen: res, items: items });
+        avisar();
+      }, 2800);
+    }, 5000);
   }
 
   return {
@@ -143,6 +188,8 @@ function crearBackendDemo() {
       if (/^usuarios\/[^/]+\/dispositivos\//.test(ruta) && v !== "482915") { var e = new Error("PERMISSION_DENIED"); e.code = "PERMISSION_DENIED"; throw e; }
       fijar(ruta, v); avisar();
       if (/dispensar_ahora$/.test(ruta) && v) simularDispensado(v);
+      var mp = /camara\/pedidos\/([^/]+)$/.exec(ruta);
+      if (mp && v) simularFoto(mp[1], v.motivo || "app", v.toma || "");
       if (/^historial_alertas\//.test(ruta) && v && v.enviado === false) {
         setTimeout(function () { fijar(ruta + "/enviado", true); fijar(ruta + "/resultado", "Telegram: 1, correo: 2"); avisar(); }, 3000);
       }
@@ -152,6 +199,11 @@ function crearBackendDemo() {
       for (var k in obj) fijar(ruta + "/" + k, obj[k]);
       avisar();
       if (obj.dispensar_ahora) simularDispensado(obj.dispensar_ahora);
+      if (obj.autoprueba) simularAutoprueba(obj.autoprueba === 2);
+      if (obj.desatascar) {
+        var nr = obj.desatascar;
+        setTimeout(function () { fijar("dispositivos/pastillero_01/comandos/desatascar", 0); fijar("dispositivos/pastillero_01/recipientes/r" + nr + "/salida", "ok"); avisar(); }, 3000);
+      }
     },
     nuevaClave: function () { return nueva(); },
     borrar: async function (ruta) { await espera(150); fijar(ruta, null); avisar(); },
@@ -171,11 +223,11 @@ function sembrarDemo(fijar) {
   var dev = "pastillero_01";
   fijar("usuarios/demo", { perfil: { nombre: "Cuidador de ejemplo", email: "cuidador@ejemplo.com" }, dispositivos: { pastillero_01: "482915" } });
   fijar("dispositivos/" + dev, {
-    info: { nombre: "Pastillero de la sala", paciente: "paciente_01", firmware: "0.3" },
+    info: { nombre: "Pastillero de la sala", paciente: "paciente_01", firmware: "0.6-camara" },
     estado: { en_linea: true, ultima_conexion: ahora, ip: "192.168.1.48", rssi_dbm: -58, hora_local: "" },
     recipientes: {
       r1: { medicamento: "Metformina 850 mg", dosis: "1 tableta", peso_pastilla_g: 0.9, pastillas: 42, capacidad: 60, aviso_minimo: 10, temperatura_c: 24.1, humedad_pct: 38, actualizado: ahora },
-      r2: { medicamento: "Losartán 50 mg", dosis: "1 tableta", peso_pastilla_g: 0.25, pastillas: 8, capacidad: 60, aviso_minimo: 10, temperatura_c: 24.3, humedad_pct: 41, actualizado: ahora },
+      r2: { medicamento: "Losartán 50 mg", dosis: "1 tableta", peso_pastilla_g: 0.25, pastillas: 8, salida: "atascado", capacidad: 60, aviso_minimo: 10, temperatura_c: 24.3, humedad_pct: 41, actualizado: ahora },
       r3: { medicamento: "Atorvastatina 20 mg", dosis: "1 tableta", peso_pastilla_g: 0.2, pastillas: 51, capacidad: 60, aviso_minimo: 10, temperatura_c: 24.0, humedad_pct: 63, actualizado: ahora }
     },
     vaso: { peso_g: 0, actualizado: ahora },
@@ -225,4 +277,40 @@ function sembrarDemo(fijar) {
   alertas.push({ tipo: "recipiente_bajo", mensaje: "Quedan 8 pastillas de Losartán 50 mg en el recipiente 2.", fecha: ahora - 5 * 3600000, enviado: true });
   alertas.push({ tipo: "ambiente", mensaje: "Humedad de 63 % en el recipiente 3 (Atorvastatina 20 mg).", fecha: ahora - 40 * 60000, enviado: false });
   alertas.forEach(function (a, i) { fijar("historial_alertas/" + dev + "/-A" + String(i).padStart(4, "0"), a); });
+
+  // camara y fotos de las 2 tomas mas recientes
+  var tomas = [];
+  for (var i = n; i >= 1 && tomas.length < 2; i--) tomas.push("-H" + String(i).padStart(4, "0"));
+  var slot = 0;
+  tomas.reverse();
+  fijar("dispositivos/" + dev + "/camara", { en_linea: true, ultima_conexion: ahora, ip: "192.168.1.52", rssi_dbm: -61, firmware: "0.6-camara", camara_ok: true, psram: true });
+  tomas.forEach(function (id, k) {
+    var t0 = ahora - (tomas.length - k) * 5 * 3600000;
+    fijar("fotos/" + dev + "/f" + String(slot).padStart(2, "0"), fotoDemo("dispensada", id, t0, 1));
+    fijar("historial_dosis/" + dev + "/" + id + "/foto_dispensada", "f" + String(slot).padStart(2, "0"));
+    slot++;
+    fijar("fotos/" + dev + "/f" + String(slot).padStart(2, "0"), fotoDemo("retirada", id, t0 + 6 * 60000, 0));
+    fijar("historial_dosis/" + dev + "/" + id + "/foto_retirada", "f" + String(slot).padStart(2, "0"));
+    slot++;
+  });
+  fijar("dispositivos/" + dev + "/camara/slot", slot - 1);
+  fijar("dispositivos/" + dev + "/camara/ultima_foto", "f" + String(slot - 1).padStart(2, "0"));
+}
+
+// Imagen de ejemplo (SVG) que imita la foto de la camara: vaso visto desde arriba
+function fotoDemo(motivo, toma, fecha, pastillas) {
+  var d = new Date(fecha);
+  var hora = fechaHoraTexto(d);
+  var p = "";
+  if (pastillas) p = '<ellipse cx="300" cy="250" rx="34" ry="17" fill="#F4F1EA" transform="rotate(-18 300 250)"/><path d="M270 258 L330 242" stroke="#D9D3C6" stroke-width="2"/>' +
+    '<ellipse cx="350" cy="275" rx="30" ry="15" fill="#F7D9A8" transform="rotate(24 350 275)"/>';
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">' +
+    '<defs><radialGradient id="l" cx="50%" cy="45%" r="70%"><stop offset="0" stop-color="#5b6563"/><stop offset="1" stop-color="#1c2221"/></radialGradient>' +
+    '<radialGradient id="v" cx="45%" cy="40%" r="60%"><stop offset="0" stop-color="#e9eef0"/><stop offset="1" stop-color="#9aa6aa"/></radialGradient></defs>' +
+    '<rect width="640" height="480" fill="url(#l)"/>' +
+    '<circle cx="320" cy="260" r="190" fill="#1F7A72" opacity=".85"/>' +
+    '<circle cx="320" cy="260" r="150" fill="url(#v)"/><circle cx="320" cy="260" r="128" fill="#d7dfe2"/>' + p +
+    '<rect x="0" y="440" width="640" height="40" fill="#000" opacity=".45"/>' +
+    '<text x="16" y="467" font-family="monospace" font-size="20" fill="#fff">' + hora + "  " + motivo.toUpperCase() + "</text></svg>";
+  return { fecha: fecha, motivo: motivo, toma: toma || "", ancho: 640, alto: 480, bytes: svg.length, tipo: "image/svg+xml", img: btoa(svg) };
 }

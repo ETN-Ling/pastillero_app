@@ -1,1 +1,3 @@
-/pastillero_app
+.firebase/
+node_modules/
+*.ino

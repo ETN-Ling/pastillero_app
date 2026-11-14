@@ -33,14 +33,30 @@
       "$dev": {
         ".read": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
         ".write": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
-        ".indexOn": ["dispensada", "estado"]
+        ".indexOn": [
+          "dispensada",
+          "estado"
+        ]
       }
     },
     "historial_alertas": {
       "$dev": {
         ".read": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
         ".write": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
-        ".indexOn": ["fecha", "tipo", "enviado"]
+        ".indexOn": [
+          "fecha",
+          "tipo",
+          "enviado"
+        ]
+      }
+    },
+    "fotos": {
+      "$dev": {
+        ".read": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
+        ".write": "auth != null && root.child('usuarios').child(auth.uid).child('dispositivos').child($dev).exists()",
+        ".indexOn": [
+          "fecha"
+        ]
       }
     }
   }

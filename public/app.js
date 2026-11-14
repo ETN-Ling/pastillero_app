@@ -18,6 +18,8 @@
   var ETIQUETA_ALERTA = Object.assign({ prueba: "Aviso de prueba" }, TIPOS_ALERTA);
   var ROLES = { familiar: "Familiar", enfermero: "Enfermero(a)", medico: "Médico(a)", otro: "Otro" };
   var EN_LINEA_MS = 3 * 60 * 1000;
+  var MOTIVO_FOTO = { dispensada: "Al dispensar", retirada: "Al retirar las pastillas", fallo: "Falla al dispensar", app: "Pedida desde la app", manual: "Pedida desde el pastillero", prueba: "Autoprueba" };
+  var ESTADO_PRUEBA = { ok: ["ok", "Bien"], falla: ["bad", "Falla"], revisar: ["warn", "Revisar"], omitido: ["idle", "Omitido"] };
   var HUMEDAD_MAX = 60, TEMP_MAX = 30;
 
   var EN_LINEA_MS = 3 * 60 * 1000;
@@ -122,6 +124,7 @@
     usuario: null, perfil: null, dispositivos: null, dev: null,
     info: null, estadoDev: null, recipientes: null, horarios: null, comandos: null,
     paciente: null, pacienteId: null, historial: null, alertas: null,
+    camara: null, fotos: null, autoprueba: null, fotoSel: null,
     vista: "inicio", historialTab: "tomas", desfase: 0, alertasMostradas: []
   };
   var bajas = [];        // funciones para dejar de escuchar
@@ -178,7 +181,7 @@
     if (bajaPaciente) { bajaPaciente(); bajaPaciente = null; }
     estado.dev = dev;
     guardarLocal("pastillero_dev", dev);
-    ["info", "estadoDev", "recipientes", "horarios", "comandos", "paciente", "historial", "alertas"].forEach(function (k) { estado[k] = null; });
+    ["info", "estadoDev", "recipientes", "horarios", "comandos", "paciente", "historial", "alertas", "camara", "fotos", "autoprueba", "fotoSel"].forEach(function (k) { estado[k] = null; });
     var base = "dispositivos/" + dev;
     var err = { alError: function (e) { toast(errorTexto(e)); } };
     bajas.push(be.escuchar(base + "/info", function (v) {
@@ -198,6 +201,16 @@
     bajas.push(be.escuchar(base + "/comandos", function (v) { estado.comandos = v || {}; pintar(); }, err));
     bajas.push(be.escuchar("historial_dosis/" + dev, function (v) { estado.historial = v || {}; pintar(); }, { ordenarPor: "dispensada", ultimos: 200, alError: err.alError }));
     bajas.push(be.escuchar("historial_alertas/" + dev, function (v) { estado.alertas = v || {}; pintar(); }, { ordenarPor: "fecha", ultimos: 100, alError: err.alError }));
+    // camara: estado, ultimas fotos y resultado de la autoprueba (no detienen la carga de la app)
+    bajas.push(be.escuchar(base + "/camara", function (v) { estado.camara = v || {}; pintar(); }, err));
+    bajas.push(be.escuchar(base + "/autoprueba", function (v) { estado.autoprueba = v; pintar(); }, err));
+    bajas.push(be.escuchar("fotos/" + dev, function (v) {
+      var antes = fotosLista()[0];
+      estado.fotos = v || {};
+      var ahoraF = fotosLista()[0];
+      if (ahoraF && (!antes || ahoraF._id !== antes._id || ahoraF.fecha !== antes.fecha)) estado.fotoSel = ahoraF._id;   // muestra la nueva
+      pintar();
+    }, { ordenarPor: "fecha", ultimos: 12, alError: err.alError }));
   }
 
   // ---------------------------------------------------------------- acceso
@@ -363,6 +376,61 @@
     return '<span class="chip idle">' + esc(x.estado || "—") + "</span>";
   }
 
+  // ---------------------------------------------------------------- camara
+  function fotosLista() { return lista(estado.fotos).filter(function (f) { return f.img; }).sort(function (a, b) { return (b.fecha || 0) - (a.fecha || 0); }); }
+  function srcFoto(f) { return "data:" + (f.tipo || "image/jpeg") + ";base64," + f.img; }
+  function fotoPorId(id) { return (estado.fotos || {})[id] ? Object.assign({ _id: id }, estado.fotos[id]) : null; }
+  function cuandoFoto(f) { return f.fecha ? etiquetaDia(new Date(f.fecha)) + ", " + horaDe(f.fecha) : ""; }
+  function altFoto(f) { return "Foto del vaso: " + (MOTIVO_FOTO[f.motivo] || f.motivo || "foto") + (f.fecha ? ", " + cuandoFoto(f) : ""); }
+  function camEnLinea() { var u = (estado.camara || {}).ultima_conexion || 0; return u && ahora() - u < EN_LINEA_MS; }
+  function chipCamara() {
+    var c = estado.camara || {};
+    if (!c.ultima_conexion) return '<span class="chip idle">Sin conectar</span>';
+    if (!camEnLinea()) return '<span class="chip bad">Sin conexión</span>';
+    return c.camara_ok === false ? '<span class="chip bad">Error de cámara</span>' : '<span class="chip ok">En línea</span>';
+  }
+  function fotoPendienteApp() {   // pedidos de la app de los ultimos 10 min que la camara no ha atendido
+    var ps = (estado.camara || {}).pedidos || {};
+    return Object.keys(ps).some(function (k) { var p = ps[k] || {}; return p.motivo === "app" && (!p.n || ahora() - p.n < 10 * 60000); });
+  }
+  // fotos de una toma del historial (al dispensar y al retirar)
+  function fotosDeToma(x) {
+    return ["dispensada", "retirada", "fallo"].map(function (m) {
+      var f = x["foto_" + m] ? fotoPorId(x["foto_" + m]) : null;
+      return f && f.img && f.toma === x._id ? f : null;   // la foto pudo ser reemplazada por una mas nueva
+    }).filter(Boolean);
+  }
+  function miniFoto(f) { return '<button class="mini" data-foto="' + esc(f._id) + '" aria-label="Ver ' + esc(altFoto(f)) + '"><img src="' + srcFoto(f) + '" alt=""></button>'; }
+
+  function seccionCamara() {
+    var fs = fotosLista();
+    var sel = (estado.fotoSel && fotoPorId(estado.fotoSel)) || fs[0] || null;
+    var pend = fotoPendienteApp();
+    var out = '<section class="section"><div class="section-head"><h2>Cámara del vaso</h2>' + chipCamara() + '</div><div class="card cam">';
+    if (sel && sel.img) out += '<button class="shot" data-foto="' + esc(sel._id) + '" aria-label="Ampliar foto"><img src="' + srcFoto(sel) + '" alt="' + esc(altFoto(sel)) + '"></button>';
+    else out += '<div class="empty">Aquí aparecerá la foto del vaso cada vez que el pastillero dispense o el paciente retire sus pastillas.</div>';
+    out += '<div class="cam-foot"><div>' + (sel ? '<div class="title" style="font-weight:700">' + esc(MOTIVO_FOTO[sel.motivo] || sel.motivo || "Foto") + '</div><div class="muted small">' + esc(cuandoFoto(sel)) + (sel.fecha ? " · " + esc(haceCuanto(sel.fecha)) : "") + "</div>" : '<div class="muted small">Sin fotos todavía</div>') +
+      '</div><button class="btn small" id="cam-foto"' + (pend ? " disabled" : "") + ">" + (pend ? "Tomando foto…" : "Tomar foto ahora") + "</button></div>";
+    if (fs.length > 1) out += '<div class="thumbs" role="group" aria-label="Fotos recientes">' + fs.map(function (f) {
+      return '<button data-ver-foto="' + esc(f._id) + '"' + (sel && f._id === sel._id ? ' aria-current="true"' : "") + ' aria-label="' + esc(altFoto(f)) + '"><img src="' + srcFoto(f) + '" alt=""></button>';
+    }).join("") + "</div>";
+    out += "</div></section>";
+    return out;
+  }
+
+  function verFoto(id) {
+    var f = fotoPorId(id);
+    if (!f || !f.img) return;
+    var toma = f.toma && estado.historial ? estado.historial[f.toma] : null;
+    abrirDialogo(MOTIVO_FOTO[f.motivo] || "Foto del vaso",
+      '<div class="viewer"><img src="' + srcFoto(f) + '" alt="' + esc(altFoto(f)) + '"></div>' +
+      '<dl class="kv" style="margin-top:14px"><dt>Fecha</dt><dd>' + esc(cuandoFoto(f)) + "</dd>" +
+      (toma ? "<dt>Toma</dt><dd>" + esc(toma.medicamento || recNombre(toma.recipiente)) + " · " + esc(((toma.programada || "").split(" ")[1]) || "") + "</dd>" : "") +
+      "<dt>Tamaño</dt><dd>" + (f.ancho ? f.ancho + " × " + f.alto + " px" : "—") + (f.bytes ? " · " + Math.round(f.bytes / 1024) + " KB" : "") + "</dd></dl>",
+      '<button class="btn" id="fv-cerrar" type="button">Cerrar</button>');
+    $("#fv-cerrar").onclick = cerrarDialogo;
+  }
+
   // ---------------------------------------------------------------- INICIO
   function vistaInicio() {
     var out = "";
@@ -376,6 +444,8 @@
       var r = estado.recipientes["r" + n];
       if (!r) return;
       var min = r.aviso_minimo || 10;
+      if (r.salida === "atascado") avisos.push(recChip(n, true) + "<span><b>" + esc(r.medicamento || "Recipiente " + n) + " está atascado:</b> no bajan pastillas. Usa <b>Desatascar</b> abajo o dale un golpecito al recipiente.</span>");
+      if (r.salida === "vacio") avisos.push(recChip(n, true) + "<span>El recipiente de <b>" + esc(r.medicamento || "recipiente " + n) + "</b> se quedó sin pastillas al dispensar.</span>");
       if (r.pastillas != null && r.pastillas <= min) avisos.push(recChip(n, true) + "<span>Quedan <b>" + r.pastillas + "</b> pastillas de " + esc(r.medicamento || "recipiente " + n) + ". Rellénalo pronto.</span>");
       if (r.humedad_pct > HUMEDAD_MAX) avisos.push(recChip(n, true) + "<span>Humedad alta (" + Math.round(r.humedad_pct) + " %) en " + esc(r.medicamento || "recipiente " + n) + ". Cambia la sílica gel.</span>");
       if (r.temperatura_c > TEMP_MAX) avisos.push(recChip(n, true) + "<span>Temperatura alta (" + r.temperatura_c.toFixed(1) + " °C) en " + esc(r.medicamento || "recipiente " + n) + ".</span>");
@@ -422,6 +492,7 @@
     // recipientes
     out += '<section class="section"><div class="section-head"><h2>Recipientes</h2><span class="muted small">' + (ed.ultima_conexion ? "Actualizado " + esc(haceCuanto(ed.ultima_conexion)) : "") + '</span></div><div class="bins">';
     var pendiente = +(estado.comandos || {}).dispensar_ahora || 0;
+    var desat = +(estado.comandos || {}).desatascar || 0;
     [1, 2, 3].forEach(function (n) {
       var r = estado.recipientes["r" + n] || {};
       var cap = r.capacidad || 60;
@@ -430,13 +501,17 @@
       var bajo = pz != null && pz <= (r.aviso_minimo || 10);
       var humAlta = r.humedad_pct > HUMEDAD_MAX, tAlta = r.temperatura_c > TEMP_MAX;
       out += '<div class="card bin" style="--rc: var(--r' + n + ')"><div class="bin-head">' + recChip(n) + '<div class="grow"><div class="title">' + esc(r.medicamento || "Sin medicamento") + '</div><div class="muted small">' + esc(r.dosis || "") + "</div></div>" +
-        (bajo ? '<span class="chip warn">Rellenar</span>' : "") + "</div>" +
+        (r.salida === "atascado" ? '<span class="chip bad">Atascado</span>' : (r.salida === "vacio" ? '<span class="chip bad">Vacío</span>' : (bajo ? '<span class="chip warn">Rellenar</span>' : ""))) + "</div>" +
         '<div><div class="bin-stats" style="justify-content:space-between"><span><b>' + (pz == null ? "—" : pz) + '</b> <span class="muted">de ' + cap + ' pastillas</span></span></div>' +
         '<div class="meter' + (bajo ? " low" : "") + '" role="img" aria-label="' + pct + ' por ciento lleno" style="margin-top:6px"><i style="width:' + pct + '%"></i></div></div>' +
         '<div class="bin-foot"><div class="bin-stats"><span' + (tAlta ? ' style="color:var(--warn)"' : "") + '><b>' + (r.temperatura_c != null ? Number(r.temperatura_c).toFixed(1) : "—") + '</b> °C</span><span' + (humAlta ? ' style="color:var(--warn)"' : "") + '><b>' + (r.humedad_pct != null ? Math.round(r.humedad_pct) : "—") + "</b> % humedad</span></div>" +
-        '<button class="btn small" data-dispensar="' + n + '"' + (pendiente ? " disabled" : "") + ">" + (pendiente === n ? "Enviando…" : "Dispensar ahora") + "</button></div></div>";
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">' + (r.salida === "atascado" ? '<button class="btn small" data-desatascar="' + n + '"' + (desat ? " disabled" : "") + ">" + (desat === n ? "Sacudiendo…" : "Desatascar") + "</button>" : "") +
+        '<button class="btn small" data-rellenar="' + n + '">Rellené</button>' +
+        '<button class="btn small" data-dispensar="' + n + '"' + (pendiente ? " disabled" : "") + ">" + (pendiente === n ? "Enviando…" : "Dispensar ahora") + "</button></div></div></div>";
     });
     out += "</div></section>";
+
+    out += seccionCamara();
 
     // avisos recientes no vistos (maximo MAX_AVISOS_INICIO)
     var vistas = obtenerVistas();
@@ -538,11 +613,13 @@
           diaActual = clave;
         }
         var prog = (x.programada || "").split(" ")[1] || (x.dispensada ? horaDe(x.dispensada) : "");
-        var detalle = x.estado === "tomada" && x.retirada && x.dispensada ? "Retirada " + Math.max(0, Math.round((x.retirada - x.dispensada) / 60000)) + " min después de dispensar" : (x.estado === "prueba" ? "Registro de prueba" : (/manual/.test(x.programada || "") ? "Dispensada manualmente" : ""));
-        out += '<div class="row"><span class="num" style="font-weight:600;width:3.2em;flex:none">' + esc(prog) + "</span>" + recChip(x.recipiente || 1, true) + '<div class="grow"><div class="title">' + esc(x.medicamento || recNombre(x.recipiente)) + "</div>" + (detalle ? '<div class="sub">' + esc(detalle) + "</div>" : "") + '<div class="chiprow">' + chipDosis(x) + "</div></div></div>";
+        var detalle = x.nota ? x.nota.charAt(0).toUpperCase() + x.nota.slice(1) : x.estado === "tomada" && x.retirada && x.dispensada ? "Retirada " + Math.max(0, Math.round((x.retirada - x.dispensada) / 60000)) + " min después de dispensar" : (x.estado === "prueba" ? "Registro de prueba" : (/manual/.test(x.programada || "") ? "Dispensada manualmente" : ""));
+        var fx = fotosDeToma(x);
+        out += '<div class="row"><span class="num" style="font-weight:600;width:3.2em;flex:none">' + esc(prog) + "</span>" + recChip(x.recipiente || 1, true) + '<div class="grow"><div class="title">' + esc(x.medicamento || recNombre(x.recipiente)) + "</div>" + (detalle ? '<div class="sub">' + esc(detalle) + "</div>" : "") + '<div class="chiprow">' + chipDosis(x) + "</div></div>" +
+          (fx.length ? '<div class="minis">' + fx.map(miniFoto).join("") + "</div>" : "") + "</div>";
       });
       if (diaActual) out += "</div>";
-      out += '<p class="muted small">"Retirada" significa que la celda de peso detectó que sacaron las pastillas del vaso. No confirma que se las haya tomado.</p>';
+      out += '<p class="muted small">"Retirada" significa que la celda de peso detectó que sacaron las pastillas del vaso. No confirma que se las haya tomado. Las fotos de cada toma se guardan mientras sean de las 20 más recientes.</p>';
     } else {
       var as = lista(estado.alertas).filter(function (a) { return a.tipo !== "ejemplo"; }).sort(function (a, b) { return (b.fecha || 0) - (a.fecha || 0); });
       if (!as.length) out += '<div class="list"><div class="empty">Aquí aparecerán los avisos enviados por Telegram y correo.</div></div>';
@@ -649,11 +726,54 @@
     }).join("") + "</div></section>";
     out += '<section class="section"><h2>Pastillero</h2><div class="card" style="padding:16px;display:flex;flex-direction:column;gap:14px"><dl class="kv">' +
       '<dt>ID</dt><dd class="num">' + esc(estado.dev) + "</dd><dt>Estado</dt><dd>" + chipConexion() + "</dd><dt>Última conexión</dt><dd>" + (ed.ultima_conexion ? esc(haceCuanto(ed.ultima_conexion)) : "—") + "</dd>" +
-      "<dt>Señal WiFi</dt><dd>" + (ed.rssi_dbm ? esc(ed.rssi_dbm) + " dBm" : "—") + "</dd><dt>Versión</dt><dd>" + esc((estado.info || {}).firmware || "—") + "</dd></dl>" +
+      "<dt>Señal WiFi</dt><dd>" + (ed.rssi_dbm ? esc(ed.rssi_dbm) + " dBm" : "—") + "</dd><dt>Versión</dt><dd>" + esc((estado.info || {}).firmware || "—") + "</dd>" +
+      "<dt>Cámara</dt><dd>" + chipCamara() + ((estado.camara || {}).rssi_dbm ? ' <span class="muted small">' + esc(estado.camara.rssi_dbm) + " dBm · " + esc(estado.camara.firmware || "") + "</span>" : "") + "</dd></dl>" +
       (estado.dispositivos && estado.dispositivos.length > 1 ? '<div class="field"><label for="s-dev">Ver otro pastillero</label><select id="s-dev">' + estado.dispositivos.map(function (d) { return "<option" + (d === estado.dev ? " selected" : "") + ">" + esc(d) + "</option>"; }).join("") + "</select></div>" : "") +
       '<button class="btn" id="s-vincular">Vincular otro pastillero</button></div></section>';
+    out += seccionDiagnostico();
     out += '<section class="section"><h2>Tu cuenta</h2><div class="card" style="padding:16px;display:flex;flex-direction:column;gap:14px"><dl class="kv"><dt>Nombre</dt><dd>' + esc((estado.perfil || {}).nombre || "—") + "</dd><dt>Correo</dt><dd>" + esc(estado.usuario.email || "") + '</dd></dl><button class="btn danger" id="s-salir">Cerrar sesión</button></div></section>';
     return out;
+  }
+
+  function seccionDiagnostico() {
+    var ap = estado.autoprueba;
+    var pedida = +(estado.comandos || {}).autoprueba || 0;
+    var out = '<section class="section"><div class="section-head"><h2>Diagnóstico</h2><button class="btn small" id="d-probar"' + (pedida || (ap && ap.en_curso) ? " disabled" : "") + ">" +
+      (pedida ? "Esperando al pastillero…" : (ap && ap.en_curso ? "Probando…" : "Probar todo")) + "</button></div>";
+    if (!ap || !ap.items) {
+      out += '<div class="list"><div class="empty">' + (ap && ap.en_curso ? "El pastillero está revisando cada componente. Tarda menos de un minuto." : "Revisa que cada sensor, motor, luz y la cámara funcionen. El resultado aparece aquí.") + "</div></div></section>";
+      return out;
+    }
+    var r = ap.resumen || {};
+    out += '<div class="list"><div class="diag-sum"><span class="chip ok">' + (r.ok || 0) + ' bien</span><span class="chip warn">' + (r.revisar || 0) + ' por revisar</span><span class="chip bad">' + (r.falla || 0) + " con falla</span>" +
+      '<span class="muted small" style="margin-left:auto">' + (ap.fecha ? esc(haceCuanto(ap.fecha)) : esc(ap.hora_local || "")) + (ap.en_curso ? " · probando de nuevo…" : "") + "</span></div>";
+    Object.keys(ap.items).sort().forEach(function (k) {
+      var it = ap.items[k] || {};
+      var e = ESTADO_PRUEBA[it.estado] || ["idle", it.estado || "—"];
+      var f = it.foto ? fotoPorId(it.foto) : null;
+      out += '<div class="row"><div class="grow"><div class="title">' + esc(it.nombre || k) + '</div><div class="sub">' + esc(it.detalle || "") + '</div></div>' +
+        (f && f.img ? '<div class="minis">' + miniFoto(f) + "</div>" : "") + '<span class="chip ' + e[0] + '">' + esc(e[1]) + "</span></div>";
+    });
+    out += "</div><p class=\"muted small\" style=\"margin:0\">“Revisar” son cosas que el pastillero no puede comprobar solo (si el buzzer sonó o la luz prendió): confírmalas en persona.</p></section>";
+    return out;
+  }
+
+  function formAutoprueba() {
+    var aviso = enLinea() ? "" : '<div class="banner warn small">El pastillero aparece sin conexión: la prueba empezará cuando se conecte.</div>';
+    abrirDialogo("Probar todo",
+      '<form class="form" id="f-ap" novalidate>' + aviso +
+      '<p style="margin:0">El pastillero revisará WiFi, reloj, sensores de clima, celdas de peso, buzzer, luces, botón y cámara. Durante 10 segundos esperará a que alguien presione el botón grande.</p>' +
+      '<label class="check"><input type="checkbox" id="ap-mot"><span>Probar también los 3 motores. <span class="muted">Si hay pastillas en los recipientes, caerán al vaso.</span></span></label>' +
+      '<div class="err" id="ap-err" role="alert" style="color:var(--bad)"></div></form>',
+      '<button class="btn" id="ap-no" type="button">Cancelar</button><button class="btn primary" id="ap-si" type="button">Empezar</button>');
+    $("#ap-no").onclick = cerrarDialogo;
+    $("#ap-si").onclick = async function () {
+      this.disabled = true;
+      try {
+        await be.actualizar("dispositivos/" + estado.dev + "/comandos", { autoprueba: $("#ap-mot").checked ? 2 : 1, autoprueba_solicitada: be.marcaTiempo() });
+        cerrarDialogo(); toast("Prueba enviada al pastillero");
+      } catch (x) { $("#ap-err").textContent = errorTexto(x); this.disabled = false; }
+    };
   }
 
   function formPaciente() {
@@ -676,6 +796,38 @@
     };
   }
 
+  // Le dice al pastillero cuantas pastillas hay; desde ahi el lleva la cuenta (resta cada pastilla que cae al vaso)
+  async function fijarConteo(n, k) {
+    var c = {}; c["pastillas_r" + n] = k;
+    await be.actualizar("dispositivos/" + estado.dev + "/comandos", c);
+    await be.actualizar("dispositivos/" + estado.dev + "/recipientes/r" + n, { pastillas: k });
+  }
+
+  function formRellenar(n) {
+    var r = estado.recipientes["r" + n] || {};
+    var cap = r.capacidad || 60;
+    abrirDialogo("Rellenar recipiente " + n,
+      '<form class="form" id="f-rel" novalidate>' +
+      '<p style="margin:0">' + recChip(n, true) + " " + esc(r.medicamento || "Recipiente " + n) + '</p>' +
+      '<div class="field"><label for="rel-k">¿Cuántas pastillas hay ahora en el recipiente?</label>' +
+      '<input id="rel-k" type="number" min="0" max="999" inputmode="numeric" value="' + esc(cap) + '"></div>' +
+      '<p class="muted small" style="margin:0">Cuenta las que pusiste más las que ya había. Desde aquí el pastillero lleva la cuenta y resta cada pastilla que cae al vaso.</p>' +
+      '<div class="err" id="rel-err" role="alert"></div></form>',
+      '<button class="btn primary" id="rel-guardar" type="button">Guardar</button>');
+    $("#rel-k").select();
+    $("#rel-guardar").onclick = async function () {
+      var v = $("#rel-k").value;
+      var k = Math.round(+v);
+      if (v === "" || !(k >= 0)) { $("#rel-err").textContent = "Escribe cuántas pastillas hay."; return; }
+      this.disabled = true;
+      try {
+        await fijarConteo(n, k);
+        cerrarDialogo();
+        toast(enLinea() ? "Recipiente " + n + ": " + k + " pastillas" : "Guardado. El pastillero lo tomará al conectarse");
+      } catch (x) { $("#rel-err").textContent = errorTexto(x); this.disabled = false; }
+    };
+  }
+
   function formRecipiente(n) {
     var r = estado.recipientes["r" + n] || {};
     abrirDialogo("Recipiente " + n,
@@ -686,7 +838,7 @@
       '<div class="field"><label for="r-pz">Pastillas actuales</label><input id="r-pz" type="number" min="0" inputmode="numeric" value="' + esc(r.pastillas != null ? r.pastillas : "") + '"></div></div>' +
       '<div class="grid2"><div class="field"><label for="r-cap">Capacidad</label><input id="r-cap" type="number" min="1" inputmode="numeric" value="' + esc(r.capacidad || 60) + '"></div>' +
       '<div class="field"><label for="r-min">Avisar al quedar</label><input id="r-min" type="number" min="0" inputmode="numeric" value="' + esc(r.aviso_minimo != null ? r.aviso_minimo : 10) + '"></div></div>' +
-      '<p class="muted small" style="margin:0">El peso por pastilla lo mide el pastillero (comando W del sketch de prueba). Con él calcula cuántas pastillas quedan; el número que escribas aquí se corrige solo con la siguiente lectura de peso.</p>' +
+      '<p class="muted small" style="margin:0">El peso por pastilla lo mide el pastillero (comando W). Si cambias "Pastillas actuales", el pastillero toma ese número y desde ahí resta cada pastilla que cae al vaso.</p>' +
       '<div class="err" id="r-err" role="alert"></div></form>',
       '<button class="btn primary" id="r-guardar" type="button">Guardar</button>');
     $("#r-guardar").onclick = async function () {
@@ -695,8 +847,13 @@
       var num = function (id) { var v = $(id).value; return v === "" ? null : +v; };
       var datos = { medicamento: med, dosis: $("#r-dosis").value.trim(), capacidad: num("#r-cap") || 60, aviso_minimo: num("#r-min") == null ? 10 : num("#r-min") };
       if (num("#r-peso")) datos.peso_pastilla_g = num("#r-peso");
-      if (num("#r-pz") != null) datos.pastillas = num("#r-pz");
-      try { await be.actualizar("dispositivos/" + estado.dev + "/recipientes/r" + n, datos); cerrarDialogo(); toast("Recipiente " + n + " guardado"); }
+      var pzNuevo = num("#r-pz");
+      var cambioPz = pzNuevo != null && pzNuevo >= 0 && pzNuevo !== r.pastillas;
+      try {
+        await be.actualizar("dispositivos/" + estado.dev + "/recipientes/r" + n, datos);
+        if (cambioPz) await fijarConteo(n, Math.round(pzNuevo));
+        cerrarDialogo(); toast("Recipiente " + n + " guardado");
+      }
       catch (x) { $("#r-err").textContent = errorTexto(x); }
     };
   }
@@ -756,6 +913,17 @@
         });
       };
     });
+    $$("[data-rellenar]").forEach(function (b) { b.onclick = function () { formRellenar(+b.dataset.rellenar); }; });
+    $$("[data-desatascar]").forEach(function (b) {
+      b.onclick = async function () {
+        var n = +b.dataset.desatascar;
+        b.disabled = true;
+        try {
+          await be.actualizar("dispositivos/" + estado.dev + "/comandos", { desatascar: n });
+          toast(enLinea() ? "El pastillero sacudirá el disco " + n : "El pastillero está sin conexión: lo hará al conectarse");
+        } catch (x) { toast(errorTexto(x)); b.disabled = false; }
+      };
+    });
     if ($("#h-nuevo")) $("#h-nuevo").onclick = function () { formHorario(null); };
     $$("[data-editar-h]").forEach(function (b) { b.onclick = function () { formHorario(lista(estado.horarios).filter(function (h) { return h._id === b.dataset.editarH; })[0]); }; });
     $$("[data-activo]").forEach(function (i) {
@@ -781,6 +949,18 @@
     if ($("#s-salir")) $("#s-salir").onclick = function () { confirmar("¿Cerrar sesión?", "Tendrás que volver a escribir tu correo y contraseña.", "Cerrar sesión", async function () { await be.salir(); }); };
     if ($("#s-vincular")) $("#s-vincular").onclick = function () { pintarVincular(true); };
     if ($("#s-dev")) $("#s-dev").onchange = function () { escucharDispositivo(this.value); };
+    $$("[data-foto]").forEach(function (b) { b.onclick = function () { verFoto(b.dataset.foto); }; });
+    $$("[data-ver-foto]").forEach(function (b) { b.onclick = function () { estado.fotoSel = b.dataset.verFoto; pintar(); }; });
+    if ($("#cam-foto")) $("#cam-foto").onclick = async function () {
+      var b = this;
+      b.disabled = true;
+      try {
+        var ruta = "dispositivos/" + estado.dev + "/camara/pedidos";
+        await be.poner(ruta + "/" + be.nuevaClave(ruta), { n: be.marcaTiempo(), motivo: "app", toma: "", por: estado.usuario.uid });
+        toast(camEnLinea() ? "Foto pedida: llega en unos segundos" : "La cámara está sin conexión: tomará la foto al conectarse");
+      } catch (x) { toast(errorTexto(x)); b.disabled = false; }
+    };
+    if ($("#d-probar")) $("#d-probar").onclick = formAutoprueba;
   }
 
   iniciar();
